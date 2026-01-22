@@ -269,70 +269,39 @@ Rules:
                 wait_until='networkidle',
                 timeout=30000
             )
-            await asyncio.sleep(3)  # Wait for Angular
+            await asyncio.sleep(2)
             
             # 2. Click "Busca Avançada"
             logger.info("      → Step 2: Clicking 'Busca Avançada'...")
-            try:
-                await self.page.click('input[value="Busca Avançada"]', timeout=5000)
-                await asyncio.sleep(2)
-            except Exception as e:
-                logger.warning(f"         ⚠️ Could not click Busca Avançada: {e}")
-                return products
+            await self.page.click('input[value="Busca Avançada"]')
+            await asyncio.sleep(1)
             
             # 3. Click magnifying glass icon next to "Princípio Ativo"
             logger.info("      → Step 3: Opening active ingredient search...")
-            try:
-                await self.page.click('i.glyphicon-search', timeout=5000)
-                await asyncio.sleep(2)
-            except Exception as e:
-                logger.warning(f"         ⚠️ Could not click magnifying glass: {e}")
-                return products
+            await self.page.click('i.glyphicon-search')
+            await asyncio.sleep(1)
             
             # 4. Type molecule name in search field
             logger.info(f"      → Step 4: Typing '{molecule}'...")
-            try:
-                await self.page.fill('input[ng-model="filter.nome"]', molecule, timeout=5000)
-                await asyncio.sleep(1)
-            except Exception as e:
-                logger.warning(f"         ⚠️ Could not fill search field: {e}")
-                return products
+            await self.page.fill('input[ng-model="filter.nome"]', molecule)
+            await asyncio.sleep(0.5)
             
             # 5. Click "Pesquisar" button
             logger.info("      → Step 5: Clicking 'Pesquisar'...")
-            try:
-                await self.page.click('input[value="Pesquisar"][type="submit"]', timeout=5000)
-                await asyncio.sleep(3)  # Wait for results
-            except Exception as e:
-                logger.warning(f"         ⚠️ Could not click Pesquisar: {e}")
-                return products
+            await self.page.click('input[value="Pesquisar"][type="submit"]')
+            await asyncio.sleep(2)
             
             # 6. Click checkbox/select icon for first result
             logger.info("      → Step 6: Selecting molecule from results...")
-            try:
-                # Check if results exist first
-                results = await self.page.query_selector_all('a:has(i.glyphicon-check)')
-                if not results:
-                    logger.warning("         ⚠️ No results found for molecule")
-                    return products
-                
-                await results[0].click()
-                await asyncio.sleep(2)
-            except Exception as e:
-                logger.warning(f"         ⚠️ Could not select molecule: {e}")
-                return products
+            await self.page.click('a:has(i.glyphicon-check)')
+            await asyncio.sleep(1)
             
             # 7. Click final "Consultar" button
             logger.info("      → Step 7: Clicking final 'Consultar'...")
-            try:
-                await self.page.click('input.btn-primary[value="Consultar"]', timeout=5000)
-                await asyncio.sleep(4)  # Wait for results to load
-            except Exception as e:
-                logger.warning(f"         ⚠️ Could not click Consultar: {e}")
-                return products
+            await self.page.click('input.btn-primary[value="Consultar"]')
+            await asyncio.sleep(3)  # Wait for results
             
             # 8. Parse results
-            logger.info("      → Step 8: Parsing results...")
             products = await self._parse_results_table()
             
         except Exception as e:
@@ -358,49 +327,36 @@ Rules:
             logger.info(f"      → Found {len(rows)} result rows")
             
             if not rows:
-                logger.warning("      → No rows found - checking if page loaded correctly")
                 return products
             
-            # Limit to 10 products to avoid timeout (Anvisa can have 100+)
-            max_products = min(len(rows), 10)
-            logger.info(f"      → Will parse first {max_products} products")
-            
-            # Click through each result
-            for i, row in enumerate(rows[:max_products]):
+            # Click through each result (limit to 20 to avoid timeout)
+            for i, row in enumerate(rows[:20]):
                 try:
                     product_name = row.get_text(strip=True)
-                    if not product_name or len(product_name) < 2:
-                        continue
-                    
-                    logger.info(f"      → [{i+1}/{max_products}] Clicking: {product_name}...")
+                    logger.info(f"      → [{i+1}/{min(len(rows), 20)}] Clicking: {product_name}...")
                     
                     # Click the row
-                    await self.page.click(f'td:has-text("{product_name}")', timeout=5000)
-                    await asyncio.sleep(3)  # Wait for detail page
+                    await self.page.click(f'td:has-text("{product_name}")')
+                    await asyncio.sleep(2)  # Wait for detail page
                     
                     # Parse product details
                     product = await self._parse_product_details()
                     if product:
                         products.append(product)
                         logger.info(f"         ✅ Parsed: {product.get('product_name', 'Unknown')}")
-                    else:
-                        logger.warning(f"         ⚠️ Could not parse product details")
                     
                     # Go back to results
-                    await self.page.go_back(timeout=5000)
-                    await asyncio.sleep(2)
+                    await self.page.go_back()
+                    await asyncio.sleep(1)
                     
                 except Exception as e:
                     logger.warning(f"         ⚠️ Error parsing product {i+1}: {str(e)}")
                     # Try to go back if stuck
                     try:
-                        await self.page.go_back(timeout=5000)
-                        await asyncio.sleep(2)
+                        await self.page.go_back()
+                        await asyncio.sleep(1)
                     except:
-                        logger.error("         ❌ Could not go back - stopping iteration")
-                        break
-            
-            logger.info(f"      ✅ Successfully parsed {len(products)} products")
+                        pass
             
         except Exception as e:
             logger.warning(f"      ⚠️ Table parsing error: {str(e)}")
@@ -419,32 +375,28 @@ Rules:
             # Build product dict
             product = {}
             
-            # Strategy: Find table rows with label + value
-            # Anvisa uses structure: <td>Label</td><td>Value</td>
+            # Strategy: Find all <td> or similar elements with labels
+            # Example structure:
+            # <td>Nome do Produto</td><td>NUBEQA</td>
+            # <td>Princípio Ativo</td><td>DAROLUTAMIDA</td>
             
-            # Helper function to find value by label (improved)
+            # Helper function to find value by label
             def find_value_by_label(label_text: str) -> str:
-                # Find ALL tds
-                all_tds = soup.find_all('td')
-                
-                for i, td in enumerate(all_tds):
-                    td_text = td.get_text(strip=True)
-                    
-                    # If this td contains the label
-                    if td_text == label_text:
-                        # Get next sibling td (should be the value)
-                        next_td = td.find_next_sibling('td')
+                label = soup.find(string=lambda x: x and label_text in x)
+                if label:
+                    parent = label.find_parent()
+                    if parent:
+                        # Try next sibling
+                        next_td = parent.find_next_sibling()
                         if next_td:
                             value = next_td.get_text(strip=True)
-                            # Ignore if value is also a label (contains keywords like "Número", "Data", etc.)
+                            # PATCH v1.0.1: Ignore values that look like labels (headers)
                             label_keywords = ['Número', 'Data', 'Empresa', 'Categoria', 'Medicamento', 
                                             'Classe', 'Tipo', 'Complemento', 'Princípio', 'Vencimento',
-                                            'Situação', 'Regularização', 'Processo']
-                            is_likely_label = any(keyword in value for keyword in label_keywords)
-                            
-                            if not is_likely_label and len(value) > 0:
+                                            'Situação', 'Regularização']
+                            is_header = any(kw in value for kw in label_keywords) and len(value) > 10
+                            if not is_header:
                                 return value
-                
                 return ""
             
             # Extract all fields
