@@ -103,11 +103,14 @@ async def search_anvisa(request: AnvisaSearchRequest):
     try:
         logger.info(f"🔍 Search request: {request.molecule}" + (f" ({request.brand_name})" if request.brand_name else ""))
         
+        # Use env GROQ_API_KEY if not provided in request
+        groq_key = request.groq_api_key or os.getenv("GROQ_API_KEY")
+        
         # Execute search
         result = await anvisa_crawler.search_anvisa(
             molecule=request.molecule,
             brand=request.brand_name,
-            groq_api_key=request.groq_api_key,
+            groq_api_key=groq_key,
             use_proxy=request.use_proxy
         )
         
