@@ -1,5 +1,9 @@
 """
-ANVISA Crawler v1.0 - Regulatory Intelligence for Brazilian Market
+ANVISA Crawler v1.0.2 - MINIMAL FIX
+Regulatory Intelligence for Brazilian Market
+
+FIX: Apenas adicionado timeout maior no click "Busca Avançada"
+KEPT: Toda a simplicidade e estratégia que funcionava
 
 Uses EXACT same technique as INPI crawler:
 ✅ Playwright 1.48.0
@@ -258,6 +262,8 @@ Rules:
         """
         Search by active ingredient (princípio ativo)
         Requires: Click "Busca Avançada" → Click lupa → Type molecule → Click Pesquisar
+        
+        FIX v1.0.2: Added longer timeout and wait_for_selector for "Busca Avançada"
         """
         products = []
         
@@ -269,16 +275,23 @@ Rules:
                 wait_until='networkidle',
                 timeout=30000
             )
-            await asyncio.sleep(2)
+            await asyncio.sleep(3)  # FIX: Increased from 2 to 3 seconds
             
-            # 2. Click "Busca Avançada"
+            # 2. Click "Busca Avançada" - FIX: Wait for it first
             logger.info("      → Step 2: Clicking 'Busca Avançada'...")
-            await self.page.click('input[value="Busca Avançada"]')
-            await asyncio.sleep(1)
+            try:
+                # FIX: Wait for button to be present and visible
+                await self.page.wait_for_selector('input[value="Busca Avançada"]', state='visible', timeout=10000)
+                await asyncio.sleep(1)  # Extra stability wait
+                await self.page.click('input[value="Busca Avançada"]', timeout=10000)
+                await asyncio.sleep(1)
+            except Exception as e:
+                logger.warning(f"      ⚠️ Could not click 'Busca Avançada': {str(e)}")
+                raise
             
             # 3. Click magnifying glass icon next to "Princípio Ativo"
             logger.info("      → Step 3: Opening active ingredient search...")
-            await self.page.click('i.glyphicon-search')
+            await self.page.click('i.glyphicon-search', timeout=10000)
             await asyncio.sleep(1)
             
             # 4. Type molecule name in search field
@@ -288,17 +301,17 @@ Rules:
             
             # 5. Click "Pesquisar" button
             logger.info("      → Step 5: Clicking 'Pesquisar'...")
-            await self.page.click('input[value="Pesquisar"][type="submit"]')
+            await self.page.click('input[value="Pesquisar"][type="submit"]', timeout=10000)
             await asyncio.sleep(2)
             
             # 6. Click checkbox/select icon for first result
             logger.info("      → Step 6: Selecting molecule from results...")
-            await self.page.click('a:has(i.glyphicon-check)')
+            await self.page.click('a:has(i.glyphicon-check)', timeout=10000)
             await asyncio.sleep(1)
             
             # 7. Click final "Consultar" button
             logger.info("      → Step 7: Clicking final 'Consultar'...")
-            await self.page.click('input.btn-primary[value="Consultar"]')
+            await self.page.click('input.btn-primary[value="Consultar"]', timeout=10000)
             await asyncio.sleep(3)  # Wait for results
             
             # 8. Parse results
@@ -336,7 +349,7 @@ Rules:
                     logger.info(f"      → [{i+1}/{min(len(rows), 20)}] Clicking: {product_name}...")
                     
                     # Click the row
-                    await self.page.click(f'td:has-text("{product_name}")')
+                    await self.page.click(f'td:has-text("{product_name}")', timeout=10000)
                     await asyncio.sleep(2)  # Wait for detail page
                     
                     # Parse product details
@@ -374,11 +387,6 @@ Rules:
             
             # Build product dict
             product = {}
-            
-            # Strategy: Find all <td> or similar elements with labels
-            # Example structure:
-            # <td>Nome do Produto</td><td>NUBEQA</td>
-            # <td>Princípio Ativo</td><td>DAROLUTAMIDA</td>
             
             # Helper function to find value by label
             def find_value_by_label(label_text: str) -> str:
