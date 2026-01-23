@@ -1,24 +1,22 @@
-# Use official Playwright Python image (same as main project)
 FROM mcr.microsoft.com/playwright/python:v1.48.0-jammy
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements
+# Install dependencies
 COPY requirements.txt .
-
-# Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
+# Copy Python files
 COPY anvisa_main.py .
 COPY anvisa_crawler.py .
+COPY anvisa_crawler_v2.py .
 
-# Install Playwright browsers (Chromium only for speed)
-RUN playwright install chromium
+# Railway uses PORT env variable
+ENV PORT=8080
 
-# Expose port
-EXPOSE 8000
+# Health check
+HEALTHCHECK --interval=30s --timeout=10s --start-period=40s --retries=3 \
+    CMD sh -c "curl -f http://localhost:${PORT}/health || exit 1"
 
-# Start command
-CMD ["python", "anvisa_main.py"]
+# Run FastAPI
+CMD sh -c "uvicorn anvisa_main:app --host 0.0.0.0 --port ${PORT:-8080}"
