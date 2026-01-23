@@ -1,24 +1,27 @@
 """
-ANVISA Crawler v2.2 - PRAGMATIC FIX
+ANVISA Crawler v2.3 - STATUS-BASED NAVIGATION
+
+NOVA ESTRATÉGIA baseada em dica do usuário:
+✅ Cada resultado tem campo "Ativo" ou "Inativo"
+✅ Esse campo identifica UNIVOCAMENTE cada medicamento
+✅ Usar esse campo como âncora para navegação
 
 APPROACH:
-✅ Use working code as base (original v2)
-✅ Add deduplication by parent <tr>
-✅ Extensive logging for debugging
-✅ Multiple fallback strategies
-✅ Robust error handling
+1. Encontrar todas as células com texto "Ativo" ou "Inativo"
+2. Para cada uma dessas células (= 1 medicamento)
+3. Clicar na PRIMEIRA célula da mesma linha (nome do produto)
+4. Parse e voltar
 
 MAINTAINS:
 ✅ Playwright v1.48.0
-✅ Same proxy rotation  
+✅ Same proxy rotation
 ✅ Same stealth techniques
-✅ Same search cascade
 """
 
 import asyncio
 import logging
 import re
-from typing import List, Dict, Optional, Set
+from typing import List, Dict, Optional
 from playwright.async_api import async_playwright, Page, Browser, BrowserContext, TimeoutError as PlaywrightTimeout
 from bs4 import BeautifulSoup
 import httpx
@@ -35,7 +38,7 @@ PROXIES = [
 
 
 class AnvisaCrawlerV2:
-    """Anvisa Crawler - Pragmatic Working Version"""
+    """Anvisa Crawler - Status-Based Navigation"""
     
     def __init__(self):
         self.browser: Optional[Browser] = None
@@ -132,7 +135,7 @@ Rules:
             Dict with found products and summary
         """
         logger.info("=" * 100)
-        logger.info(f"🏥 ANVISA SEARCH V2.2 (PRAGMATIC): {molecule}" + (f" ({brand})" if brand else ""))
+        logger.info(f"🏥 ANVISA SEARCH V2.3 (STATUS-BASED): {molecule}" + (f" ({brand})" if brand else ""))
         logger.info("=" * 100)
         
         # Translate to Portuguese
@@ -149,7 +152,7 @@ Rules:
         
         try:
             async with async_playwright() as p:
-                # Launch browser with stealth
+                # Launch browser
                 launch_args = {
                     'headless': True,
                     'args': [
@@ -199,7 +202,7 @@ Rules:
                 await self.browser.close()
         
         # Build response
-        logger.info(f"✅ V2.2 Search completed: {len(all_products)} products found")
+        logger.info(f"✅ V2.3 Search completed: {len(all_products)} products found")
         
         return {
             'found': len(all_products) > 0,
@@ -214,23 +217,21 @@ Rules:
         }
     
     async def _search_by_brand_name(self, brand_name: str) -> List[Dict]:
-        """Search by brand name (Nome do Produto)"""
+        """Search by brand name"""
         products = []
         
         try:
-            # Build URL
             url = f"https://consultas.anvisa.gov.br/#/medicamentos/q/?nomeProduto={brand_name}"
             logger.info(f"      → URL: {url}")
             
-            # Navigate with increased timeout
             await self.page.goto(url, wait_until='networkidle', timeout=60000)
-            await asyncio.sleep(3)  # Wait for Angular
+            await asyncio.sleep(3)
             
-            # Try to increase pagination to 50
+            # Try pagination
             await self._set_pagination_50()
             
-            # Parse results - PRAGMATIC VERSION
-            products = await self._parse_results_table_pragmatic()
+            # Parse using STATUS-BASED method
+            products = await self._parse_results_table_status_based()
             
         except Exception as e:
             logger.warning(f"      ⚠️ Brand name search error: {str(e)}")
@@ -242,7 +243,7 @@ Rules:
         products = []
         
         try:
-            # 1. Go to main page
+            # 1. Main page
             logger.info("      → Step 1: Going to main page...")
             await self.page.goto(
                 "https://consultas.anvisa.gov.br/#/medicamentos/",
@@ -251,63 +252,63 @@ Rules:
             )
             await asyncio.sleep(3)
             
-            # 2. Click "Busca Avançada" - WITH MULTIPLE SELECTORS
+            # 2. Click "Busca Avançada" with multiple selectors
             logger.info("      → Step 2: Clicking 'Busca Avançada'...")
             
-            # Try multiple possible selectors
-            clicked_advanced = False
+            clicked = False
             selectors = [
                 'input[value="Busca Avançada"]',
                 'input[ng-click="toggleBuscaAvancada()"]',
                 'button:has-text("Busca Avançada")',
-                'input.btn-default[value*="Busca"]'
+                '.btn-default:has-text("Busca")'
             ]
             
             for selector in selectors:
                 try:
                     await self.page.click(selector, timeout=5000)
-                    clicked_advanced = True
-                    logger.info(f"         ✅ Clicked with selector: {selector}")
+                    clicked = True
+                    logger.info(f"         ✅ Clicked: {selector}")
                     break
-                except:
+                except Exception as e:
+                    logger.debug(f"         → Failed {selector}: {str(e)}")
                     continue
             
-            if not clicked_advanced:
-                logger.warning("      ⚠️ Could not click Busca Avançada - trying to continue anyway")
-                # Try to proceed anyway - maybe page already in advanced mode
+            if not clicked:
+                logger.warning("      ⚠️ Could not click Busca Avançada")
+                # Continue anyway - might already be in advanced mode
             
             await asyncio.sleep(2)
             
-            # 3. Click search icon next to "Princípio Ativo"
+            # 3. Click search icon
             logger.info("      → Step 3: Opening molecule search...")
             await self.page.click('i.glyphicon-search', timeout=10000)
             await asyncio.sleep(1)
             
-            # 4. Type molecule name
+            # 4. Type molecule
             logger.info(f"      → Step 4: Typing '{molecule}'...")
             await self.page.fill('input[ng-model="filter.nome"]', molecule)
             await asyncio.sleep(1)
             
-            # 5. Click "Pesquisar" button in modal
+            # 5. Click Pesquisar
             logger.info("      → Step 5: Clicking 'Pesquisar'...")
             await self.page.click('input[value="Pesquisar"][type="submit"]', timeout=10000)
             await asyncio.sleep(2)
             
-            # 6. Click checkbox/select icon for first result
-            logger.info("      → Step 6: Selecting molecule from results...")
+            # 6. Select first result
+            logger.info("      → Step 6: Selecting molecule...")
             await self.page.click('a:has(i.glyphicon-check)', timeout=10000)
             await asyncio.sleep(1)
             
-            # 7. Click final "Consultar" button
-            logger.info("      → Step 7: Clicking final 'Consultar'...")
+            # 7. Click Consultar
+            logger.info("      → Step 7: Clicking 'Consultar'...")
             await self.page.click('input.btn-primary[value="Consultar"]', timeout=10000)
             await asyncio.sleep(3)
             
-            # 8. Try to increase pagination to 50
+            # 8. Pagination
             await self._set_pagination_50()
             
-            # 9. Parse results - PRAGMATIC VERSION
-            products = await self._parse_results_table_pragmatic()
+            # 9. Parse using STATUS-BASED method
+            products = await self._parse_results_table_status_based()
             
         except Exception as e:
             logger.warning(f"      ⚠️ Active ingredient search error: {str(e)}")
@@ -315,13 +316,11 @@ Rules:
         return products
     
     async def _set_pagination_50(self):
-        """Set pagination to 50 results per page"""
+        """Set pagination to 50"""
         try:
-            # Wait for table
             await self.page.wait_for_selector('table tbody tr', timeout=5000)
             await asyncio.sleep(1)
             
-            # Check if 50 button exists
             button_exists = await self.page.evaluate("""
                 Array.from(document.querySelectorAll('button')).some(b => b.textContent.trim() === '50')
             """)
@@ -332,134 +331,123 @@ Rules:
                 await asyncio.sleep(3)
                 logger.info("      → Pagination set to 50")
             else:
-                logger.info("      → Pagination not needed (< 10 results)")
+                logger.info("      → Pagination not needed")
                 
         except Exception as e:
             logger.debug(f"      → Pagination: {str(e)}")
     
-    async def _parse_results_table_pragmatic(self) -> List[Dict]:
+    async def _parse_results_table_status_based(self) -> List[Dict]:
         """
-        PRAGMATIC: Parse results table with deduplication by parent <tr>
+        NEW: Parse using "Ativo/Inativo" status field as unique identifier
         
-        Strategy:
-        1. Get all <td> with ng-click="detail" (original working approach)
-        2. Track which parent <tr> we've already processed
-        3. Only process first <td> found in each unique <tr>
-        4. This eliminates duplicates while keeping original logic intact
+        Strategy based on user tip:
+        1. Find all cells containing "Ativo" or "Inativo"
+        2. Each one = 1 unique product
+        3. For each status cell, find first clickable cell in same row
+        4. Click that cell to open product details
         """
         products = []
-        processed_rows: Set[int] = set()  # Track processed row indices
         
         try:
             # Wait for table
             await self.page.wait_for_selector('table', timeout=10000)
             await asyncio.sleep(2)
             
-            # Save HTML for debugging
             html = await self.page.content()
-            logger.debug(f"      → Page HTML length: {len(html)} chars")
-            
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Find all clickable cells (original approach)
-            all_clickable_cells = soup.find_all('td', {'ng-click': lambda x: x and 'detail' in x})
+            # Find all cells with "Ativo" or "Inativo" text
+            # This identifies each unique product
+            status_cells = soup.find_all('td', string=lambda text: text and (text.strip() == 'Ativo' or text.strip() == 'Inativo'))
             
-            logger.info(f"      → Found {len(all_clickable_cells)} clickable cells total")
+            logger.info(f"      → Found {len(status_cells)} products (by Ativo/Inativo status)")
             
-            if not all_clickable_cells:
-                logger.warning("      → No clickable cells found!")
-                # Debug: Print table structure
-                tables = soup.find_all('table')
-                logger.debug(f"      → Found {len(tables)} tables in page")
-                if tables:
-                    first_table = tables[0]
-                    rows = first_table.find_all('tr')
-                    logger.debug(f"      → First table has {len(rows)} rows")
-                    if rows:
-                        first_row = rows[0] if len(rows) > 0 else None
-                        if first_row:
-                            cells = first_row.find_all(['td', 'th'])
-                            logger.debug(f"      → First row has {len(cells)} cells")
+            if not status_cells:
+                logger.warning("      → No status cells found - trying alternative detection")
+                # Fallback: find cells with text containing these words
+                status_cells = soup.find_all('td', string=lambda text: text and ('Ativo' in text or 'Inativo' in text))
+                logger.info(f"      → Fallback found {len(status_cells)} cells")
+            
+            if not status_cells:
+                logger.error("      → No products detected in results table")
                 return products
             
-            # Build map of cell -> parent row index
-            # This lets us deduplicate by row
-            cell_to_row_map = {}
-            unique_rows = []
+            # Process each product
+            max_products = min(len(status_cells), 50)
             
-            for cell in all_clickable_cells:
-                # Find parent <tr>
-                parent_tr = cell.find_parent('tr')
-                if parent_tr:
-                    # Get a unique identifier for this row
-                    row_id = id(parent_tr)
-                    
-                    # If we haven't seen this row yet, track it
-                    if row_id not in cell_to_row_map:
-                        cell_to_row_map[row_id] = cell
-                        unique_rows.append((row_id, cell))
-            
-            logger.info(f"      → Deduplicated to {len(unique_rows)} unique product rows")
-            
-            if not unique_rows:
-                logger.warning("      → No unique rows after deduplication!")
-                return products
-            
-            # Process each unique row (limit to 50)
-            max_products = min(len(unique_rows), 50)
-            
-            for idx, (row_id, cell) in enumerate(unique_rows[:max_products]):
+            for idx in range(max_products):
                 try:
-                    # Re-get page content after navigation
+                    # Re-get page content
                     await asyncio.sleep(1)
                     html = await self.page.content()
                     soup = BeautifulSoup(html, 'html.parser')
                     
-                    # Re-find all clickable cells
-                    all_cells = soup.find_all('td', {'ng-click': lambda x: x and 'detail' in x})
+                    # Re-find status cells
+                    status_cells_refresh = soup.find_all('td', string=lambda text: text and (text.strip() == 'Ativo' or text.strip() == 'Inativo'))
                     
-                    # Rebuild deduplication map
-                    cell_to_row_map_refresh = {}
-                    unique_rows_refresh = []
+                    if not status_cells_refresh:
+                        status_cells_refresh = soup.find_all('td', string=lambda text: text and ('Ativo' in text or 'Inativo' in text))
                     
-                    for c in all_cells:
-                        parent_tr = c.find_parent('tr')
-                        if parent_tr:
-                            rid = id(parent_tr)
-                            if rid not in cell_to_row_map_refresh:
-                                cell_to_row_map_refresh[rid] = c
-                                unique_rows_refresh.append(c)
-                    
-                    if idx >= len(unique_rows_refresh):
-                        logger.warning(f"      → Row {idx} no longer exists after navigation")
+                    if idx >= len(status_cells_refresh):
+                        logger.warning(f"      → Product {idx} no longer in results")
                         break
                     
-                    product_name = unique_rows_refresh[idx].get_text(strip=True)
-                    logger.info(f"      → [{idx+1}/{max_products}] Clicking: {product_name}...")
+                    status_cell = status_cells_refresh[idx]
+                    status_text = status_cell.get_text(strip=True)
                     
-                    # Use JavaScript to click the specific index
-                    # We click the idx-th UNIQUE cell (first cell of each row)
+                    # Find the parent row of this status cell
+                    parent_row = status_cell.find_parent('tr')
+                    
+                    if not parent_row:
+                        logger.warning(f"      → [{idx+1}] No parent row for status cell")
+                        continue
+                    
+                    # Find first clickable cell in this row
+                    first_clickable = parent_row.find('td', {'ng-click': lambda x: x and 'detail' in x})
+                    
+                    if not first_clickable:
+                        logger.warning(f"      → [{idx+1}] No clickable cell in row")
+                        continue
+                    
+                    product_name = first_clickable.get_text(strip=True)
+                    logger.info(f"      → [{idx+1}/{max_products}] Clicking: {product_name} ({status_text})...")
+                    
+                    # Click using JavaScript
+                    # Strategy: Find status cells again, get parent row, click first cell
                     js_click = f"""
                     (function() {{
-                        var allCells = document.querySelectorAll('td[ng-click*="detail"]');
-                        var seenRows = new Set();
-                        var uniqueCells = [];
-                        
-                        allCells.forEach(function(cell) {{
-                            var row = cell.closest('tr');
-                            if (row) {{
-                                var rowId = Array.from(row.parentNode.children).indexOf(row);
-                                if (!seenRows.has(rowId)) {{
-                                    seenRows.add(rowId);
-                                    uniqueCells.push(cell);
-                                }}
-                            }}
+                        // Find all status cells
+                        var allCells = Array.from(document.querySelectorAll('td'));
+                        var statusCells = allCells.filter(function(cell) {{
+                            var text = cell.textContent.trim();
+                            return text === 'Ativo' || text === 'Inativo';
                         }});
                         
-                        if (uniqueCells[{idx}]) {{
-                            uniqueCells[{idx}].click();
+                        if (statusCells.length === 0) {{
+                            // Fallback: partial match
+                            statusCells = allCells.filter(function(cell) {{
+                                var text = cell.textContent;
+                                return text.indexOf('Ativo') !== -1 || text.indexOf('Inativo') !== -1;
+                            }});
+                        }}
+                        
+                        if (!statusCells[{idx}]) {{
+                            return false;
+                        }}
+                        
+                        // Get parent row
+                        var row = statusCells[{idx}].closest('tr');
+                        if (!row) {{
+                            return false;
+                        }}
+                        
+                        // Find first clickable cell in this row
+                        var clickable = row.querySelector('td[ng-click*="detail"]');
+                        if (clickable) {{
+                            clickable.click();
                             return true;
                         }}
+                        
                         return false;
                     }})()
                     """
@@ -467,22 +455,21 @@ Rules:
                     clicked = await self.page.evaluate(js_click)
                     
                     if not clicked:
-                        logger.warning(f"         ⚠️ Could not click row {idx+1}")
+                        logger.warning(f"         ⚠️ Could not click product {idx+1}")
                         continue
                     
-                    # Wait for detail page
+                    # Wait for details page
                     await asyncio.sleep(3)
                     
                     try:
                         await self.page.wait_for_selector('table', timeout=15000)
                     except:
-                        logger.warning(f"         ⚠️ Detail page did not load for {product_name}")
-                        # Try to go back
+                        logger.warning(f"         ⚠️ Details page timeout for {product_name}")
                         await self.page.go_back(timeout=5000)
                         await asyncio.sleep(2)
                         continue
                     
-                    # Parse product details
+                    # Parse product
                     product = await self._parse_product_details_v2()
                     
                     if product:
@@ -490,21 +477,19 @@ Rules:
                         logger.info(f"         ✅ Parsed: {product.get('product_name', 'Unknown')}")
                         pres_count = len(product.get('presentations', []))
                         links = product.get('links', {})
-                        logger.info(f"            → Presentations: {pres_count}")
-                        logger.info(f"            → Documents: Bulário={bool(links.get('bulario'))}, "
-                                  f"Parecer={bool(links.get('parecer_publico'))}, "
-                                  f"Rotulagem={len(links.get('rotulagem', []))}")
-                    else:
-                        logger.warning(f"         ⚠️ Failed to parse product details")
+                        logger.info(f"            → Presentations: {pres_count}, "
+                                  f"Bulário: {bool(links.get('bulario'))}, "
+                                  f"Parecer: {bool(links.get('parecer_publico'))}, "
+                                  f"Rotulagem: {len(links.get('rotulagem', []))}")
                     
-                    # Go back to results
+                    # Go back
                     await self.page.go_back()
                     await asyncio.sleep(2)
                     
                     try:
                         await self.page.wait_for_selector('table', timeout=10000)
                     except:
-                        logger.warning(f"         ⚠️ Results page did not reload")
+                        logger.warning(f"         ⚠️ Results page reload timeout")
                         break
                     
                 except PlaywrightTimeout:
@@ -531,14 +516,13 @@ Rules:
         return products
     
     async def _parse_product_details_v2(self) -> Optional[Dict]:
-        """Parse product detail page - FULL DATA EXTRACTION"""
+        """Parse product detail page"""
         try:
             html = await self.page.content()
             soup = BeautifulSoup(html, 'html.parser')
             
             product = {}
             
-            # Helper function
             def find_value_by_label(label_text: str) -> str:
                 label = soup.find(string=lambda x: x and label_text in x)
                 if label:
@@ -572,17 +556,12 @@ Rules:
             product['atc_code'] = find_value_by_label('ATC')
             product['priority_type'] = find_value_by_label('Tipo de Priorização')
             
-            # Extract document links
             product['links'] = self._extract_document_links(soup)
-            
-            # Extract presentations
             product['presentations'] = self._extract_presentations(soup)
             
-            # Only return if we got minimum data
             if product.get('product_name') and product.get('active_ingredient'):
                 return product
             else:
-                logger.debug(f"         → Incomplete product data: name={product.get('product_name')}, active={product.get('active_ingredient')}")
                 return None
                 
         except Exception as e:
@@ -590,7 +569,7 @@ Rules:
             return None
     
     def _extract_document_links(self, soup: BeautifulSoup) -> Dict[str, str]:
-        """Extract all document links"""
+        """Extract document links"""
         links = {
             'bulario': '',
             'parecer_publico': '',
@@ -598,7 +577,7 @@ Rules:
         }
         
         try:
-            # Bulário Eletrônico
+            # Bulário
             bulario_label = soup.find(string=lambda x: x and 'Bulário Eletrônico' in x)
             if bulario_label:
                 parent = bulario_label.find_parent()
@@ -609,7 +588,7 @@ Rules:
                         if link and link.get('href'):
                             links['bulario'] = link.get('href')
             
-            # Parecer Público
+            # Parecer
             parecer_label = soup.find(string=lambda x: x and 'Parecer Público' in x)
             if parecer_label:
                 parent = parecer_label.find_parent()
@@ -641,7 +620,7 @@ Rules:
         return links
     
     def _extract_presentations(self, soup: BeautifulSoup) -> List[Dict]:
-        """Extract ALL presentations"""
+        """Extract presentations"""
         presentations = []
         
         try:
@@ -678,7 +657,7 @@ Rules:
         return presentations
     
     def _build_summary(self, products: List[Dict]) -> Dict:
-        """Build summary statistics"""
+        """Build summary"""
         if not products:
             return {
                 'total_products': 0,
@@ -754,5 +733,5 @@ Rules:
         }
 
 
-# Singleton instance
+# Singleton
 anvisa_crawler_v2 = AnvisaCrawlerV2()
