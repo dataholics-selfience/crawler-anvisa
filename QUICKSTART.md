@@ -1,207 +1,251 @@
-# 🚀 ANVISA API V2 - Quick Start Guide
+# Quick Start Guide
 
-## Deploy in 3 Minutes
+Get the ANVISA Crawler API running in 5 minutes!
 
-### 1️⃣ Deploy to Railway
+## 🚀 Option 1: Railway (Recommended)
 
-```bash
-# Option A: One-click deploy
-# Go to: https://railway.app
-# Click: New Project → Deploy from GitHub repo → Select this repo
-# Railway will auto-detect Dockerfile and deploy
+**Fastest deployment - No local setup needed**
 
-# Option B: Railway CLI
-railway login
-railway init
-railway up
-```
+1. **Push to GitHub**
+   ```bash
+   git init
+   git add .
+   git commit -m "Initial commit - ANVISA API v2.0.1"
+   git remote add origin YOUR_GITHUB_REPO
+   git push -u origin main
+   ```
 
-**That's it!** Railway will:
-- Build the Docker image
-- Deploy the API
-- Assign a public URL
-- Start health monitoring
+2. **Deploy on Railway**
+   - Go to [railway.app](https://railway.app)
+   - Click "New Project" → "Deploy from GitHub"
+   - Select your repository
+   - Add environment variable: `GROQ_API_KEY=gsk_xxx` (optional)
+   - Railway auto-detects Dockerfile and deploys!
+
+3. **Test it**
+   ```bash
+   curl https://YOUR-APP.railway.app/health
+   ```
 
 ---
 
-### 2️⃣ Test Your Deployment
+## 💻 Option 2: Local Development
+
+### Prerequisites
+- Python 3.11+
+- pip
+
+### Setup
 
 ```bash
-# Replace YOUR_RAILWAY_URL with your actual URL
-export API_URL="https://your-app.railway.app"
+# 1. Install dependencies
+pip install -r requirements.txt
 
+# 2. Install Playwright browsers
+playwright install chromium
+
+# 3. (Optional) Configure Groq API
+cp .env.example .env
+# Edit .env and add your GROQ_API_KEY
+
+# 4. Run the server
+uvicorn anvisa_main:app --reload --port 8000
+```
+
+### Test it
+
+```bash
 # Health check
-curl $API_URL/health
+curl http://localhost:8000/health
 
-# Test V2 (enhanced)
-curl -X POST $API_URL/anvisa/search/v2 \
+# Test search (without translation)
+curl -X POST http://localhost:8000/anvisa/search/v2 \
   -H "Content-Type: application/json" \
   -d '{
-    "molecule": "darolutamide",
-    "brand_name": "nubeqa"
+    "molecule": "aspirin",
+    "brand_name": "aspirina",
+    "use_proxy": false
   }'
 ```
 
 ---
 
-### 3️⃣ View Results
+## 🐳 Option 3: Docker
 
-You should see:
+### Build and Run
+
+```bash
+# 1. Build the image
+docker build -t anvisa-api .
+
+# 2. Run the container
+docker run -p 8080:8080 \
+  -e GROQ_API_KEY=gsk_your_key_here \
+  anvisa-api
+
+# 3. Test it
+curl http://localhost:8080/health
+```
+
+---
+
+## 📝 Your First Search
+
+### Example 1: Brand Name Search (Fast)
+
+```bash
+curl -X POST http://localhost:8000/anvisa/search/v2 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "molecule": "darolutamide",
+    "brand_name": "nubeqa",
+    "use_proxy": false
+  }'
+```
+
+**What happens:**
+1. Translates "darolutamide" → "darolutamida" (if Groq API configured)
+2. Searches by brand name "nubeqa" first (fast)
+3. Returns complete product info + presentations + document links
+4. Takes ~10 seconds
+
+### Example 2: Molecule Search (Comprehensive)
+
+```bash
+curl -X POST http://localhost:8000/anvisa/search/v2 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "molecule": "aspirin",
+    "use_proxy": false
+  }'
+```
+
+**What happens:**
+1. No brand name provided, goes straight to advanced search
+2. Uses "Busca Avançada" flow with active ingredient
+3. Returns ALL products containing aspirin
+4. Takes ~15-20 seconds (more comprehensive)
+
+### Example 3: With Translation
+
+```bash
+curl -X POST http://localhost:8000/anvisa/search/v2 \
+  -H "Content-Type: application/json" \
+  -d '{
+    "molecule": "ibuprofen",
+    "brand_name": "advil",
+    "groq_api_key": "gsk_your_key_here",
+    "use_proxy": false
+  }'
+```
+
+**What happens:**
+1. Translates: "ibuprofen" → "ibuprofeno", "advil" → "advil"
+2. Searches with Portuguese terms
+3. More accurate results!
+
+---
+
+## 🔍 Understanding the Response
+
 ```json
 {
   "found": true,
-  "products": [{
-    "product_name": "NUBEQA",
-    "presentations": [{
-      "description": "300 MG COM REV...",
-      "registration": "170560120001",
-      ...
-    }],
-    "links": {
-      "bulario": "https://...",
-      "parecer_publico": "https://...",
-      "rotulagem": [...]
+  "products": [
+    {
+      "product_name": "NUBEQA",
+      "active_ingredient": "DAROLUTAMIDA",
+      "company": "BAYER S.A.",
+      "registration_date": "23/12/2019",
+      "presentations": [
+        {
+          "description": "300 MG COM REV CT FR PLAS PEAD OPC X 120",
+          "pharmaceutical_form": "Comprimido Revestido",
+          "validity": "36 meses"
+        }
+      ],
+      "links": {
+        "bulario": "http://...",
+        "parecer_publico": "http://...",
+        "rotulagem": [...]
+      }
     }
-  }],
+  ],
   "summary": {
     "total_products": 1,
     "total_presentations": 1,
-    "documents_available": {
-      "bulario": 1,
-      "parecer_publico": 1,
-      "rotulagem": 1
-    }
+    "reference_drugs": 1,
+    "companies": ["BAYER S.A."]
   }
 }
 ```
 
+**Key fields:**
+- `products`: Array of found products
+- `summary`: Statistics and aggregated info
+- `search_terms`: Shows what terms were actually used
+
 ---
 
-## 🎯 Choose Your Endpoint
+## 🛠️ Troubleshooting
 
-### Use V2 (Recommended) ✨
+### "No module named 'playwright'"
 ```bash
-POST /anvisa/search/v2
-```
-**Why**: Full data extraction (presentations + links)
-
-### Use V1 (Legacy)
-```bash
-POST /anvisa/search
-```
-**Why**: Backward compatibility, faster (but incomplete data)
-
----
-
-## 📊 Compare Results
-
-```bash
-# See V1 vs V2 differences
-curl $API_URL/compare/darolutamide?brand_name=nubeqa
+pip install playwright
+playwright install chromium
 ```
 
----
+### "Connection refused" or timeout errors
+- Check if Railway deployment is still starting (takes ~2 minutes first time)
+- Local: Make sure port 8000/8080 is not in use
+- Try with `use_proxy: false` first
 
-## 🔧 Optional: Add Groq Translation
+### "No products found"
+- Check if molecule/brand name is spelled correctly
+- Try searching with Portuguese terms directly
+- Look at Railway logs for detailed error messages
 
-1. Get API key: https://console.groq.com
-2. In Railway dashboard:
-   - Go to your project
-   - Click "Variables"
-   - Add: `GROQ_API_KEY=gsk_xxx`
-3. Redeploy
-
-Now your API will translate molecules to Portuguese automatically!
-
----
-
-## 📱 Use the API
-
-### Python Example
-```python
-import httpx
-
-async def search_anvisa(molecule: str, brand: str = None):
-    async with httpx.AsyncClient() as client:
-        response = await client.post(
-            "https://your-app.railway.app/anvisa/search/v2",
-            json={
-                "molecule": molecule,
-                "brand_name": brand
-            },
-            timeout=120.0
-        )
-        return response.json()
-
-# Usage
-result = await search_anvisa("darolutamide", "nubeqa")
-print(f"Found {len(result['products'])} products")
-print(f"Total presentations: {result['summary']['total_presentations']}")
-```
-
-### JavaScript Example
-```javascript
-async function searchAnvisa(molecule, brand) {
-  const response = await fetch(
-    'https://your-app.railway.app/anvisa/search/v2',
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ 
-        molecule: molecule, 
-        brand_name: brand 
-      })
-    }
-  );
-  return await response.json();
-}
-
-// Usage
-const result = await searchAnvisa('darolutamide', 'nubeqa');
-console.log(`Found ${result.products.length} products`);
-console.log(`Documents available:`, result.summary.documents_available);
-```
+### Translation not working
+- Verify `GROQ_API_KEY` is set correctly
+- API key must start with `gsk_`
+- Check [console.groq.com](https://console.groq.com) for usage limits
 
 ---
 
-## 🐛 Troubleshooting
+## 📚 Next Steps
 
-### Problem: Deployment failed
-**Solution**: Check Railway logs for errors
-```bash
-railway logs
-```
-
-### Problem: API returns 500 error
-**Solution**: Check if Playwright browsers are installed (they should be in Docker image)
-
-### Problem: Empty results
-**Solution**: 
-- Verify the molecule/brand name is correct
-- Try both endpoints (V1 and V2)
-- Check Railway logs for detailed errors
+1. **Read the full README.md** for complete documentation
+2. **Check CHANGELOG.md** to understand v2.0.1 fix
+3. **Review Railway logs** to see crawler in action
+4. **Test with your molecules** and see the results!
 
 ---
 
-## 📈 Next Steps
+## 🎯 Key Features to Try
 
-1. ✅ **Deployed** - Your API is running
-2. 📊 **Test** - Try different molecules
-3. 🔧 **Configure** - Add Groq key for translation
-4. 📚 **Integrate** - Use in your application
-5. 🎯 **Monitor** - Check Railway metrics
+1. **Compare V1 vs V2**
+   - V1: `/anvisa/search`
+   - V2: `/anvisa/search/v2` (recommended)
 
----
+2. **Enable proxy rotation**
+   - Set `"use_proxy": true` in request
+   - Helps avoid rate limiting
 
-## 🆘 Need Help?
-
-- **Logs**: `railway logs`
-- **Status**: Railway dashboard → Deployments
-- **Health**: `curl YOUR_URL/health`
-- **Documentation**: See README.md
+3. **Batch searches**
+   - Search multiple molecules
+   - Compare results
+   - Build datasets
 
 ---
 
-**That's it! You're ready to go.** 🎉
+## 💡 Tips
 
-Total time: ~3 minutes
+- **Use V2 endpoint** (`/anvisa/search/v2`) for best results
+- **Provide both molecule AND brand** when possible
+- **Monitor Railway logs** to understand what's happening
+- **Start with simple searches** (like aspirin) to verify setup
+- **Use Portuguese terms** directly if no Groq key
+
+---
+
+**Happy crawling! 🏥📊**

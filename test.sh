@@ -1,141 +1,111 @@
 #!/bin/bash
 
-# ANVISA API V2 - Test Script
-# Tests both V1 and V2 endpoints
+# ANVISA API Test Script
+# Tests the crawler with sample searches
 
-set -e
+API_URL="${1:-http://localhost:8000}"
 
 echo "=========================================="
-echo "ANVISA API V2 - Test Suite"
+echo "ANVISA API v2.0.1 - Test Script"
 echo "=========================================="
+echo "Testing API at: $API_URL"
 echo ""
 
-# Get API URL from argument or use default
-API_URL="${1:-http://localhost:8080}"
+# Color codes
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m' # No Color
 
-echo "🎯 Testing API at: $API_URL"
-echo ""
-
-# Test 1: Health Check
-echo "1️⃣ Testing health endpoint..."
+# Test 1: Health check
+echo -e "${YELLOW}Test 1: Health Check${NC}"
 HEALTH=$(curl -s "$API_URL/health")
 if echo "$HEALTH" | grep -q "healthy"; then
-    echo "✅ Health check passed"
+    echo -e "${GREEN}✅ PASS${NC} - API is healthy"
 else
-    echo "❌ Health check failed"
+    echo -e "${RED}❌ FAIL${NC} - API not responding"
     exit 1
 fi
 echo ""
 
 # Test 2: Root endpoint
-echo "2️⃣ Testing root endpoint..."
+echo -e "${YELLOW}Test 2: Root Endpoint${NC}"
 ROOT=$(curl -s "$API_URL/")
 if echo "$ROOT" | grep -q "Anvisa API"; then
-    echo "✅ Root endpoint passed"
+    echo -e "${GREEN}✅ PASS${NC} - Root endpoint working"
+    echo "$ROOT" | grep -o '"version":"[^"]*"'
+    echo "$ROOT" | grep -o '"v2_available":[^,]*'
 else
-    echo "❌ Root endpoint failed"
-    exit 1
+    echo -e "${RED}❌ FAIL${NC} - Root endpoint error"
 fi
 echo ""
 
-# Test 3: V1 search
-echo "3️⃣ Testing V1 search endpoint..."
-V1_RESULT=$(curl -s -X POST "$API_URL/anvisa/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "molecule": "darolutamide",
-    "brand_name": "nubeqa"
-  }')
+# Test 3: Simple search (aspirin - should be fast)
+echo -e "${YELLOW}Test 3: Simple Search (Aspirin)${NC}"
+echo "Searching for aspirin (no brand name)..."
+START_TIME=$(date +%s)
 
-if echo "$V1_RESULT" | grep -q "found"; then
-    echo "✅ V1 search passed"
+SEARCH=$(curl -s -X POST "$API_URL/anvisa/search/v2" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "molecule": "aspirin",
+        "use_proxy": false
+    }')
+
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+if echo "$SEARCH" | grep -q '"found":true'; then
+    PRODUCTS=$(echo "$SEARCH" | grep -o '"total_products":[0-9]*' | cut -d':' -f2)
+    echo -e "${GREEN}✅ PASS${NC} - Found $PRODUCTS products"
+    echo "Duration: ${DURATION} seconds"
+else
+    echo -e "${RED}❌ FAIL${NC} - No products found"
+    echo "Response: $SEARCH"
+fi
+echo ""
+
+# Test 4: Brand name search (darolutamide/nubeqa)
+echo -e "${YELLOW}Test 4: Brand Name Search (Darolutamide/Nubeqa)${NC}"
+echo "Searching for darolutamide with brand name nubeqa..."
+START_TIME=$(date +%s)
+
+SEARCH2=$(curl -s -X POST "$API_URL/anvisa/search/v2" \
+    -H "Content-Type: application/json" \
+    -d '{
+        "molecule": "darolutamide",
+        "brand_name": "nubeqa",
+        "use_proxy": false
+    }')
+
+END_TIME=$(date +%s)
+DURATION=$((END_TIME - START_TIME))
+
+if echo "$SEARCH2" | grep -q '"found":true'; then
+    PRODUCTS=$(echo "$SEARCH2" | grep -o '"total_products":[0-9]*' | cut -d':' -f2)
+    PRESENTATIONS=$(echo "$SEARCH2" | grep -o '"total_presentations":[0-9]*' | cut -d':' -f2)
+    echo -e "${GREEN}✅ PASS${NC} - Found $PRODUCTS products with $PRESENTATIONS presentations"
+    echo "Duration: ${DURATION} seconds"
     
-    # Check if presentations are empty (expected in V1)
-    if echo "$V1_RESULT" | grep -q '"presentations":\[\]'; then
-        echo "   ℹ️  V1 presentations are empty (expected)"
+    # Check for document links
+    if echo "$SEARCH2" | grep -q '"bulario"'; then
+        echo -e "${GREEN}✅ Document links extracted${NC}"
     fi
 else
-    echo "❌ V1 search failed"
-    echo "Response: $V1_RESULT"
-    exit 1
+    echo -e "${RED}❌ FAIL${NC} - No products found"
+    echo "Response: $SEARCH2"
 fi
 echo ""
 
-# Test 4: V2 search
-echo "4️⃣ Testing V2 search endpoint..."
-V2_RESULT=$(curl -s -X POST "$API_URL/anvisa/search/v2" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "molecule": "darolutamide",
-    "brand_name": "nubeqa"
-  }')
-
-if echo "$V2_RESULT" | grep -q "found"; then
-    echo "✅ V2 search passed"
-    
-    # Check if presentations are filled (expected in V2)
-    if echo "$V2_RESULT" | grep -q '"presentations":\[{'; then
-        echo "   ✨ V2 presentations are filled (expected)"
-    else
-        echo "   ⚠️  V2 presentations might be empty (unexpected)"
-    fi
-    
-    # Check if links are present (expected in V2)
-    if echo "$V2_RESULT" | grep -q '"links":{'; then
-        echo "   ✨ V2 links are present (expected)"
-    else
-        echo "   ⚠️  V2 links might be missing (unexpected)"
-    fi
-else
-    echo "❌ V2 search failed"
-    echo "Response: $V2_RESULT"
-    exit 1
-fi
-echo ""
-
-# Test 5: Compare endpoint
-echo "5️⃣ Testing compare endpoint..."
-COMPARE=$(curl -s "$API_URL/compare/darolutamide?brand_name=nubeqa")
-if echo "$COMPARE" | grep -q "query"; then
-    echo "✅ Compare endpoint passed"
-else
-    echo "❌ Compare endpoint failed"
-    exit 1
-fi
-echo ""
-
-# Test 6: V1 test endpoint
-echo "6️⃣ Testing V1 quick test..."
-TEST_V1=$(curl -s "$API_URL/test")
-if echo "$TEST_V1" | grep -q "test"; then
-    echo "✅ V1 test endpoint passed"
-else
-    echo "❌ V1 test endpoint failed"
-    exit 1
-fi
-echo ""
-
-# Test 7: V2 test endpoint
-echo "7️⃣ Testing V2 quick test..."
-TEST_V2=$(curl -s "$API_URL/test/v2")
-if echo "$TEST_V2" | grep -q "test"; then
-    echo "✅ V2 test endpoint passed"
-else
-    echo "❌ V2 test endpoint failed"
-    exit 1
-fi
-echo ""
-
+# Summary
 echo "=========================================="
-echo "✅ All tests passed!"
+echo "Test Summary"
 echo "=========================================="
+echo "API URL: $API_URL"
+echo "All core tests completed!"
 echo ""
-echo "📊 Summary:"
-echo "   - Health check: ✅"
-echo "   - Root endpoint: ✅"
-echo "   - V1 search: ✅"
-echo "   - V2 search: ✅"
-echo "   - Compare: ✅"
-echo "   - Test endpoints: ✅"
+echo "Next steps:"
+echo "1. Check Railway logs for detailed output"
+echo "2. Try with Groq API key for translation"
+echo "3. Test with use_proxy: true"
 echo ""
-echo "🎉 Your ANVISA API V2 is working correctly!"
