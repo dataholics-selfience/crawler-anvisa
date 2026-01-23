@@ -325,6 +325,10 @@ Rules:
     async def _parse_results_table(self) -> List[Dict]:
         """
         Parse results table and click through to get details
+        
+        FIX v1.0.3: Changed to find ROWS (tr) instead of all cells (td)
+        The table has multiple columns per product, so we need to group by row
+        and click only the first clickable cell (product name)
         """
         products = []
         
@@ -333,23 +337,38 @@ Rules:
             html = await self.page.content()
             soup = BeautifulSoup(html, 'html.parser')
             
-            # Find all clickable product rows
+            # Find all clickable product cells
             # Looking for td with ng-click="detail(produto)"
-            rows = soup.find_all('td', {'ng-click': lambda x: x and 'detail' in x})
+            clickable_cells = soup.find_all('td', {'ng-click': lambda x: x and 'detail' in x})
             
-            logger.info(f"      → Found {len(rows)} result rows")
+            # FIX: Group cells by their parent row (tr)
+            # Each row has multiple td with ng-click, but we only want to click once per row
+            seen_rows = set()
+            product_rows = []
             
-            if not rows:
+            for cell in clickable_cells:
+                parent_row = cell.find_parent('tr')
+                if parent_row and parent_row not in seen_rows:
+                    seen_rows.add(parent_row)
+                    # Get first clickable cell in this row (usually the product name)
+                    first_cell = parent_row.find('td', {'ng-click': lambda x: x and 'detail' in x})
+                    if first_cell:
+                        product_rows.append(first_cell)
+            
+            logger.info(f"      → Found {len(product_rows)} result rows")
+            
+            if not product_rows:
                 return products
             
             # Click through each result (limit to 20 to avoid timeout)
-            for i, row in enumerate(rows[:20]):
+            for i, row in enumerate(product_rows[:20]):
                 try:
                     product_name = row.get_text(strip=True)
-                    logger.info(f"      → [{i+1}/{min(len(rows), 20)}] Clicking: {product_name}...")
+                    logger.info(f"      → [{i+1}/{min(len(product_rows), 20)}] Clicking: {product_name}...")
                     
-                    # Click the row
-                    await self.page.click(f'td:has-text("{product_name}")', timeout=10000)
+                    # Click the row using Playwright (more reliable than text selector)
+                    # Use index to click the correct element
+                    await self.page.click(f'tbody tr:nth-child({i+1}) td[ng-click*="detail"]', timeout=10000)
                     await asyncio.sleep(2)  # Wait for detail page
                     
                     # Parse product details
